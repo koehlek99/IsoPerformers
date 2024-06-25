@@ -8,7 +8,7 @@ anno <- getBM(attributes = c('ensembl_transcript_id','ensembl_transcript_id_vers
               values = transcript_ids,            
               filters = 'ensembl_transcript_id_version', 
       mart = mart)
-
+##
 idx <- rbp$transcript %in% anno$ensembl_transcript_id_version
 rbp_anno <- rbp[idx,]
 cts <- rbp_anno[,81:93] 
