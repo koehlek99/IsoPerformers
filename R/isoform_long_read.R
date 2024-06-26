@@ -5,32 +5,41 @@ library(stringr)
 library(ggplot2)
 library(DRIMSeq)
 
+library(EnsDb.Hsapiens.v86)
+edb <- EnsDb.Hsapiens.v86
+txp <- transcripts(edb, return.type="data.frame")
+library(tibble)
+txp <- txp |> as_tibble()
+library(dplyr)
+tx2gene <- txp |>
+  dplyr::select(transcript=tx_id, gene=gene_id)
+
 rbp <-read.table(gzfile("data/quantification_gencode.counts.txt.gz"),header = T)   
 rbp$transcript <- unlist(lapply(strsplit(rbp$transcript,split='\\.'),'[[',1))
-
 samples_exp = names(rbp)[grepl('exp', names(rbp))]
 samples_ctrl = names(rbp)[grepl('ctr', names(rbp))]
 rbp = rbp %>% dplyr::select(transcript, samples_exp, samples_ctrl)
 rbp = rbp[rowSums(rbp[c(samples_exp, samples_ctrl)])!=0,]
-
-library(EnsDb.Hsapiens.v86)
-edb <- EnsDb.Hsapiens.v86
-txp <- transcripts(edb, return.type="data.frame")
-
-library(tibble)
-txp <- txp |> as_tibble()
-
-library(dplyr)
-tx2gene <- txp |>
-  dplyr::select(tx_id, gene_id)
-
-
 rbp = merge(rbp, tx2gene, by.x = "transcript", by.y = "tx_id", all.x = TRUE)
 rbp = rbp[c("gene_id","transcript", samples_exp, samples_ctrl)]
 
+##########################################
+## an alternative approach to the above ##
+##########################################
+library(readr)
+counts <- read_delim("data/quantification_gencode.counts.txt.gz")
+counts <- counts |>
+  mutate(transcript = sub("\\..*","",transcript)) |>
+  left_join(tx2gene) |>
+  dplyr::select(transcript, gene, contains("exp"), contains("ctr"))
+counts <- counts %>%
+  mutate(rowsum = rowSums(dplyr::select(., contains(c("exp","ctr"))))) |>
+  dplyr::filter(rowsum > 0) |>
+  dplyr::select(-rowsum)
+###########################################
+
 ##number of transcripts without gene id
 rbp %>% subset(is.na(gene_id)) %>% nrow()
-
 rbp_filt = na.omit(rbp)
 #rbp_filt = rbp_filt %>% subset(hgnc_symbol!="")
 
