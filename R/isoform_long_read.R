@@ -82,9 +82,10 @@ variance <- pca$sdev^2
 explained_variance <- variance / sum(variance)
 plot(explained_variance)
 
-pcs = as.data.frame(pca$rotation)
-pcs$condition =  ifelse(grepl('exp', rownames(pcs)), 'knockout', 'control')
-pcs$sample = rownames(pcs) 
+rotation <- as.data.frame(pca$rotation)
+pcs <- as.data.frame(pca$x)
+pcs$condition <- ifelse(grepl('exp', rownames(pcs)), 'knockout', 'control')
+pcs$sample <- rownames(pcs) 
 
 png('plots/PCA_highVar.png')
 ggplot(pcs, aes(x=PC1, y = PC2, color = condition)) + geom_point() + 
