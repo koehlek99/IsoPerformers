@@ -54,17 +54,16 @@ ggplot(PTBP1_counts_long) + geom_boxplot(aes(x=condition, y = value, fill = cond
 dev.off()
 
 
-#filter out lowly expressed transcripts
+#create colData df
 sample_dat <- data.frame(sample_id = c(samples_ctrl, samples_exp))
 sample_dat$condition = ifelse(grepl('exp', sample_dat$sample_id), 'knockout', 'control')
-
 
 
 library(DESeq2)
 ##PCA of samples and look at gene loadings, DESeq object > plotPCA()
 dds <- DESeqDataSetFromMatrix(countData = rbp_filt[-c(1,2)], colData = sample_dat, design =  ~ condition)
 vsd <- vst(dds)
-head(assay(vsd)) # scaled, vst data
+assay(vsd) # scaled, vst data
 
 ntop <- 1000 # pick a number
 
@@ -80,7 +79,10 @@ pca <- prcomp(t(assay(vsd)[select,]))
 #calculate explained variance
 variance <- pca$sdev^2
 explained_variance <- variance / sum(variance)
+
+png('plots/explainedVar.png')
 plot(explained_variance)
+dev.off()
 
 rotation <- as.data.frame(pca$rotation)
 pcs <- as.data.frame(pca$x)
@@ -89,52 +91,80 @@ pcs$sample <- rownames(pcs)
 
 png('plots/PCA_highVar.png')
 ggplot(pcs, aes(x=PC1, y = PC2, color = condition)) + geom_point() + 
-  geom_text(aes(label = sample), vjust = -1, hjust = 0.5)
+  geom_text(aes(label = sample),show.legend=FALSE, vjust = -1, hjust = 0.5)
 dev.off()
 
-##get transcripts with highest eigenvectors for PC1
-transcript_ids <- rbp_filt[select, ]$transcript
-ordered_PC1 <- pca$x[order(pca$x[,"PC1"],decreasing = T),]
-rownames(ordered_PC1)[1:10]
-transcript_IDs_PC1 = list()
-for (i in rownames(ordered_PC1)[1:10]){
-  i = as.integer(i)
-  transcript_IDs_i = rbp_filt$transcript[i]
-  transcript_IDs_PC1 <- c(transcript_IDs_PC1, transcript_IDs_i)
+
+##get features (transcripts) with highest loadings for PC1 and 2
+pc1_idx = rownames(rotation %>% arrange(-PC1) %>% head(10))
+pc2_idx = rownames(rotation %>% arrange(-PC2) %>% head(10))
+
+##extract corresponding gene ids 
+top10_pc1_trans = rbp_filt[pc1_idx,'transcript']
+top10_pc1_gene = rbp_filt[pc1_idx,'gene_id']
+
+top10_pc2_trans = rbp_filt[pc2_idx,'transcript']
+top10_pc2_gene = rbp_filt[pc2_idx,'gene_id']
+
+##plots all transcripts per gene 
+plotTranscriptExp = function(gene, counts, plots){
+  tmp_count = counts %>% subset(gene_id==gene)
+  tmp_count = pivot_longer(tmp_count, cols = c(samples_exp, samples_ctrl))
+  tmp_count$condition = ifelse(grepl('exp', tmp_count$name), 'knockout', 'control')
+  
+  plots[[gene]] =  ggplot(data.frame(tmp_count)) + 
+                  geom_boxplot(aes(x=condition, y = value, fill = condition)) + 
+                  facet_wrap(~transcript) + 
+                  ggtitle('Transcript isoforms of ', gene)
+  return(plots)
 }
-unlist(transcript_IDs_PC1)
 
-##get transcripts with highest eigenvectors for PC2
-ordered_PC2 <- pca$x[order(pca$x[,"PC2"],decreasing = T),]
-rownames(ordered_PC2)[1:10]
-transcript_IDs_PC2 = list()
-for (i in rownames(ordered_PC2)[1:10]){
-  i = as.integer(i)
-  transcript_IDs_i = rbp_filt$transcript[i]
-  transcript_IDs_PC2 <- c(transcript_IDs_PC2, transcript_IDs_i)
-}
-unlist(transcript_IDs_PC2)
+p1 = lapply(top10_pc1_gene, plotTranscriptExp, counts = rbp_filt, plots = list())
+p2 = lapply(top10_pc2_gene, plotTranscriptExp, counts = rbp_filt, plots = list())
+
+pdf(paste0('plots/topTranscripts_PC1.pdf'))
+p1
+dev.off()
 
 
+pdf(paste0('plots/topTranscripts_PC2.pdf'))
+p2
+dev.off()
 
 
 
-
-##To-Do
-counts_drim = rbp_filt[-2] %>% rename(gene_id = ensembl_gene_id, feature_id = transcript)
-
+##DrimSeq filtering
+counts_drim = rbp_filt %>% dplyr::rename(feature_id=transcript)
 d <- dmDSdata(counts=counts_drim, samples=sample_dat)
-methods(class=class(d))
-counts(d[1,])[,1:4]
-rbp_filt$transcript[84066]
-head(transcript_ids)
+
 n <- 13
 n.small <- 6
-d <- dmFilter(d,
+d_filt <- dmFilter(d,
               min_samps_feature_expr=n.small, min_feature_expr=10,
               min_samps_feature_prop=n.small, min_feature_prop=0.1,
               min_samps_gene_expr=n, min_gene_expr=13)
 
-## An object of class dmDSdata 
-## with 7764 genes and 12 samples
-## * data accessors: counts(), samples()
+##we're filtering out the huge majority of transcripts and genes, super stringent!
+
+length(unique(rbp_filt$gene_id)) 
+length(unique(rbp_filt$transcript)) 
+
+length(unique(counts(d_filt)$gene_id)) 
+length(unique(counts(d_filt)$feature_id)) 
+
+filterStats = data.frame(DrimFiltered = c('No', 'Yes'), 
+           NrGenes = c(length(unique(rbp_filt$gene_id)), length(unique(counts(d_filt)$gene_id)) ),
+           NrTranscripts = c(length(unique(rbp_filt$transcript)), length(unique(counts(d_filt)$feature_id))))
+filterPlot = ggplot(filterStats %>% pivot_longer(cols = c('NrGenes', 'NrTranscripts'))) + 
+              geom_bar(aes(x=name, y = value, fill = DrimFiltered), stat = 'identity', position = 'dodge')
+filterPlot
+
+png('plots/statsFiltering.png')
+filterPlot
+dev.off()
+
+
+
+##DESeq2- To-Do?
+
+
