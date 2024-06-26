@@ -64,7 +64,7 @@ library(DESeq2)
 ##PCA of samples and look at gene loadings, DESeq object > plotPCA()
 dds <- DESeqDataSetFromMatrix(countData = rbp_filt[-c(1,2)], colData = sample_dat, design =  ~ condition)
 vsd <- vst(dds)
-assay(vsd) # scaled, vst data
+head(assay(vsd)) # scaled, vst data
 
 ntop <- 1000 # pick a number
 
@@ -75,7 +75,7 @@ rv <- rowVars(assay(vsd))
 select <- head(order(rv, decreasing=TRUE), ntop)
 
 # perform a PCA on the data in assay(x) for the selected genes
-pca <- prcomp(assay(vsd)[select,])
+pca <- prcomp(t(assay(vsd)[select,]))
 
 #calculate explained variance
 variance <- pca$sdev^2
