@@ -79,7 +79,7 @@ sample_dat$condition = ifelse(grepl('exp', sample_dat$sample_id), 'knockout', 'c
 
 library(DESeq2)
 ##PCA of samples and look at gene loadings, DESeq object > plotPCA()
-dds <- DESeqDataSetFromMatrix(countData = rbp_filt[-c(1,2)], colData = sample_dat, design =  ~ condition)
+dds <- DESeqDataSetFromMatrix(countData = rbp_filt[-c(1,2,3)], colData = sample_dat, design =  ~ condition)
 vsd <- vst(dds)
 assay(vsd) # scaled, vst data
 
@@ -120,73 +120,59 @@ pc2_idx <- rownames(rotation |> arrange(-PC2) |> head(10))
 ##extract corresponding gene ids 
 top10_pc1_trans <-  rbp_filt[pc1_idx,'transcript']
 top10_pc1_gene <- rbp_filt[pc1_idx,c('symbol', 'gene')]
+#top10_pc1_gene <- rbp_filt[pc1_idx,c('symbol')]
 
 top10_pc2_trans <-  rbp_filt[pc2_idx,'transcript']
 top10_pc2_gene <- rbp_filt[pc2_idx,c('symbol', 'gene')]
 
 ##plots all transcripts per gene 
-plotTranscriptExp = function(gene, counts, plots){
+plotTranscriptExp = function(geneID, geneName, counts){
   # Subset the counts data for the specified gene
-  tmp_count <- counts |> dplyr::filter(gene == gene)
+  tmp_count <- counts |> dplyr::filter(gene == geneID)
   # Pivot the data to a longer format
   tmp_count <- pivot_longer(tmp_count, cols = c(samples_exp, samples_ctrl))
   tmp_count$condition = ifelse(grepl('exp', tmp_count$name), 'knockout', 'control')
   
-  plots[[gene]] =  ggplot(data.frame(tmp_count)) + 
+  p = ggplot(data.frame(tmp_count)) + 
                   geom_boxplot(aes(x=condition, y = value, fill = condition)) + 
                   facet_wrap(~transcript) + 
-                  ggtitle(paste('Transcript isoforms of ', symbol))
-  return(plots)
+                  ggtitle(paste('Transcript isoforms of ', geneName))
+  return(p)
 }
-gene_input <- top10_pc1_gene[,2]
-test <- rbp_filt |> dplyr::filter(gene == gene_input)
-test <- pivot_longer(test, cols = c(samples_exp, samples_ctrl))
-test$condition = ifelse(grepl('exp', test$name), 'knockout', 'control')
-plots[[gene_input]] =  ggplot(data.frame(test)) + 
-                  geom_boxplot(aes(x=condition, y = value, fill = condition)) + 
-                  facet_wrap(~transcript) 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 # Initialize an empty list to store plots
-plots <- list()
+plots_pc1 <- list()
 
-# Generate plots for top 10 genes
-for (gene in unique(top10_pc1_gene$gene)) {
-  plots <- plotTranscriptExp(gene, rbp_filt, plots)
+for(gene in top10_pc1_gene$gene){
+  message(gene)
+  symbol = top10_pc1_gene[top10_pc1_gene$gene==gene, 'symbol']
+  message(symbol)
+  plotTranscriptExp(gene, symbol, counts = rbp_filt)
+  plots_pc1[[gene]] = plotTranscriptExp(gene, symbol, counts = rbp_filt)
+}
+
+plots_pc2 <- list()
+
+for(gene in top10_pc2_gene$gene){
+  message(gene)
+  symbol = top10_pc2_gene[top10_pc2_gene$gene==gene, 'symbol']
+  message(symbol)
+  plotTranscriptExp(gene, symbol, counts = rbp_filt)
+  plots_pc2[[gene]] = plotTranscriptExp(gene, symbol, counts = rbp_filt)
 }
 
 
-
-p1 = lapply(top10_pc1_gene, plotTranscriptExp, counts = rbp_filt, plots = list()) # nolint
-p1
-p2 = lapply(top10_pc2_gene, plotTranscriptExp, counts = rbp_filt, plots = list())
-
 pdf(paste0('plots/topTranscripts_PC1.pdf'))
-p1
+plots_pc1
 dev.off()
 
 
 pdf(paste0('plots/topTranscripts_PC2.pdf'))
-p2
+plots_pc2
 dev.off()
 
 ##DrimSeq filtering
-counts_drim = rbp_filt %>% dplyr::rename(feature_id=transcript)
+counts_drim = rbp_filt[-2] %>% dplyr::rename(gene_id = gene, feature_id=transcript)
 d <- dmDSdata(counts=counts_drim, samples=sample_dat)
 
 n <- 13
@@ -205,7 +191,7 @@ length(unique(counts(d_filt)$gene_id))
 length(unique(counts(d_filt)$feature_id)) 
 
 filterStats = data.frame(DrimFiltered = c('No', 'Yes'), 
-           NrGenes = c(length(unique(rbp_filt$gene_id)), length(unique(counts(d_filt)$gene_id)) ),
+           NrGenes = c(length(unique(rbp_filt$gene)), length(unique(counts(d_filt)$gene_id)) ),
            NrTranscripts = c(length(unique(rbp_filt$transcript)), length(unique(counts(d_filt)$feature_id))))
 filterPlot = ggplot(filterStats %>% pivot_longer(cols = c('NrGenes', 'NrTranscripts'))) + 
               geom_bar(aes(x=name, y = value, fill = DrimFiltered), stat = 'identity', position = 'dodge')
@@ -215,9 +201,133 @@ png('plots/statsFiltering.png')
 filterPlot
 dev.off()
 
+library(DEXSeq)
+sample.data <- DRIMSeq::samples(d_filt)
+
+count.data <- counts(d_filt)[,-c(1:2)]
+dxd <- DEXSeqDataSet(countData=count.data,
+                     sampleData=sample.data,
+                     design=~sample + exon + condition:exon,
+                     featureID=counts(d_filt)$feature_id,
+                     groupID=counts(d_filt)$gene_id)
+
+dxd <- estimateSizeFactors(dxd)
+dxd <- estimateDispersions(dxd, quiet=TRUE)
+dxd <- testForDEU(dxd)
+
+dxr <- DEXSeqResults(dxd, independentFiltering=FALSE)
+dxr %>% data.frame() %>% mutate(sign = padj < 0.05) %>% dplyr::count(sign)
 
 
-##DESeq2- To-Do?
+png('plots/featureLoadings_PC1.png')
+plot((rotation |> arrange(-PC1))$PC1, ylab = "Feature loadings PC1") + abline(v=200, col = 'blue') + abline(v=800, col = 'red') #+ ylab('')
+dev.off()
 
 
-?lapply
+##get features (transcripts) with highest loadings for PC1 and 2
+pc1_top200<- rownames(rotation |> arrange(-PC1) |> head(200))
+pc1_top800<- rownames(rotation |> arrange(-PC1) |> head(800))
+
+##extract corresponding gene ids 
+top200_pc1_trans <-  rbp_filt[pc1_top200,'transcript']
+top800_pc1_trans <-  rbp_filt[pc1_top800,'transcript']
+
+library(VennDiagram)
+dexseq_transcripts = (dxr %>% subset(padj < 0.05) %>% as.data.frame()%>% arrange(padj))$featureID
+
+dexseq_transcripts_01 = (dxr %>% subset(padj < 0.01) %>% as.data.frame()%>% arrange(padj))$featureID
+dexseq_genes_01 = (dxr %>% subset(padj < 0.01) %>% as.data.frame()%>% arrange(padj))$groupID
+
+write.table(dexseq_transcripts_01, 'DEXSeq_sig0.01.txt', quote = F, row.names = F, col.names = F)
+write.table(unique(dexseq_genes_01), 'DEXSeq_sig0.01_genes.txt', quote = F, row.names = F, col.names = F)
+
+venn.diagram(x = list(top200_pc1_trans, dexseq_transcripts),
+             category.names = c("PC1" , "DEXSeq"),
+             filename = 'plots/Venn_PC_DEXseq.png',
+             output=TRUE, # Output features,
+             imagetype="png" ,
+             height = 2000 , 
+             width = 2000 , 
+             resolution = 300,
+             compression = "lzw")
+
+venn.diagram(x = list(top800_pc1_trans, dexseq_transcripts),
+             category.names = c("PC1- top transcripts" , "DEXSeq"),
+             filename = 'plots/Venn_PCtop800_DEXseq.png',
+             output=TRUE)
+
+intersect(dexseq_transcripts, top200_pc1_trans)
+
+dexseq_plt = list() 
+top_genes = (dxr %>% data.frame() %>% arrange(padj) %>% head(10))$groupID
+for(gene in top_genes){
+  message(gene)
+  symbol = unique(rbp_filt[rbp_filt$gene==gene, 'symbol'])
+  message(symbol)
+  dexseq_plt[[gene]] = plotTranscriptExp(gene, symbol, rbp_filt)
+}
+
+pdf('plots/DEXSeq_TranscriptExp.pdf')
+dexseq_plt
+dev.off()
+
+(dxr %>% subset(padj < 0.01) %>% subset(groupID=='ENSG00000140416'))
+
+tpm1_sign = rbp_filt |> 
+  subset(transcript %in% (dxr %>% subset(padj < 0.01) %>% subset(groupID=='ENSG00000140416'))$featureID)
+rownames(tpm1_sign) = tpm1_sign$transcript
+
+png('plots/TPM1_heatmap.png')
+tpm1_sign[-c(1:3)] %>% 
+  as.matrix() %>% 
+  heatmap(margins = c(15, 10), cexRow = 1, cexCol = 1)
+dev.off()
+
+tpm1_sign_long <- pivot_longer(tpm1_sign, cols = c(samples_exp, samples_ctrl))
+tpm1_sign_long$condition = ifelse(grepl('exp', tpm1_sign_long$name), 'knockout', 'control')
+p = ggplot(data.frame(tpm1_sign_long)) + 
+  geom_boxplot(aes(x=condition, y = value, fill = condition)) + 
+  facet_wrap(~transcript) + 
+  ggtitle(paste('Transcript isoforms of TPM1'))
+
+png('plots/TPM1_exp.png')
+p
+dev.off()
+
+library(data.table)
+gtf = fread('data/hg38.ensGene.gtf', sep = '\t') 
+transcript_id <- str_extract(gtf$V9, 'transcript_id "\\S+"')
+transcript_id <- str_replace(transcript_id, 'transcript_id ', '')
+transcript_id <- str_replace_all(transcript_id, '"', '')
+gtf$transcript_name = transcript_id
+
+tpm_exons <- gtf %>% 
+  subset(transcript_name %in% rownames(tpm1_sign)) %>% 
+  dplyr::filter(V3 == "exon") %>% 
+  rename(V1 = "seqnames", V3 = "type", V4 = "start", V5 = "end", V7 = "strand") %>% 
+  dplyr::select(seqnames,  start, end, strand, type, transcript_name)
+
+tpm1_sign$transcript
+tpm1_sign$transcript 
+
+tpm_exons$transcript_name = factor(tpm_exons$transcript_name, 
+                                   levels = rev(c("ENST00000403994", "ENST00000560970", "ENST00000357980", "ENST00000560445", "ENST00000358278")))
+library(ggtranscript)
+transcriptStructures = tpm_exons %>% 
+  ggplot(aes(
+    xstart = start,
+    xend = end,
+    y = transcript_name
+  )) +
+  geom_range(
+    aes()
+  ) +
+  geom_intron(
+    data = to_intron(tpm_exons, "transcript_name"),
+    aes(strand = strand)
+  )
+
+
+png("plots/transStructures.png")
+transcriptStructures
+dev.off()
